@@ -30,8 +30,8 @@ jobs:
 
     - name: 4. 執行抓取任務
       env:
-        JUDICIAL_USER: ${{ secrets.JUDICIAL_USER }}
-        JUDICIAL_PWD: ${{ secrets.JUDICIAL_PWD }}
+        JUDICIALUSER: ${{ secrets.JUDICIALUSER }}
+        JUDICIALPWD: ${{ secrets.JUDICIALPWD }}
       run: python app_law.py --jid "${{ github.event.inputs.jid }}"
 
     - name: 5. 自動將結果存回 GitHub 儲存庫
