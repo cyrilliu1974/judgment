@@ -1,6 +1,10 @@
 import streamlit as st
 import requests
 import datetime
+import urllib3  # 新增
+
+# 隱藏 SSL 警告
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==========================================
 # 核心邏輯：司法院 API 串接類別
@@ -38,7 +42,7 @@ class JudicialYuanAPI:
         
         try:
             # 發送 POST 請求驗證 (設定 timeout 避免卡住)
-            response = requests.post(url, json=payload, headers={'Content-Type': 'application/json'}, timeout=10)
+            response = requests.post(url, json=payload, headers={'Content-Type': 'application/json'}, timeout=10, verify=False)
             response.raise_for_status()
             data = response.json()
             
@@ -88,7 +92,7 @@ class JudicialYuanAPI:
                 "j": jid_raw
             }
             
-            response = requests.post(url, json=payload, timeout=20)
+            response = requests.post(url, json=payload, timeout=20, verify=False)
             response.raise_for_status()
             result = response.json()
             
