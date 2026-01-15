@@ -1,0 +1,17 @@
+# === 資安與敏感資訊 (最重要) ===
+.env
+.env.*
+
+
+# === Python 編譯與暫存檔 (建議加入) ===
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+build/
+dist/
+*.egg-info/
