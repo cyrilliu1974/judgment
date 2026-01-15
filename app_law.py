@@ -152,8 +152,8 @@ class JudicialYuanAPI:
 # ==========================================
 def run_cli_mode(jid_input):
     # 從 GitHub Secrets 讀取帳密
-    user = os.getenv("JUDICIAL_USER")
-    pwd = os.getenv("JUDICIAL_PWD")
+    user = os.getenv("JUDICIALUSER")
+    pwd = os.getenv("JUDICIALPWD")
     
     if not user or not pwd:
         print("❌ 錯誤：未設定環境變數 JUDICIAL_USER 或 JUDICIAL_PWD")
