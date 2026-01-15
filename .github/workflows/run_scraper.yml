@@ -1,4 +1,4 @@
-name: 判決書自動抓取 (GitHub Actions)
+name: 判決書自動抓取 (GitHub Actions) 
 
 on:
   workflow_dispatch:
