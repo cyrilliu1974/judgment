@@ -1,0 +1,6 @@
+{
+  "rewrite": [{ "source": "/(.*)", "destination": "api/main.py" }],
+  "functions": {
+    "api/main.py": { "runtime": "python@3.10" }
+  }
+}

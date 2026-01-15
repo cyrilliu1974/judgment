@@ -1,3 +1,5 @@
-streamlit
+fastapi
+uvicorn
 requests
 urllib3
+streamlit
