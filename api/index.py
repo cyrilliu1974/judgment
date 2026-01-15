@@ -1,7 +1,9 @@
-from fastapi import FastAPI, Query
+import sys
 import os
-# 假設 JudicialYuanAPI 類別在同目錄或已導入
-from .app_law import JudicialYuanAPI 
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from fastapi import FastAPI, Query
+from judicial_api import JudicialYuanAPI 
 
 app = FastAPI()
 
