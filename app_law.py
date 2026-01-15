@@ -1,10 +1,39 @@
 import streamlit as st
 import requests
 import datetime
-import urllib3  # 新增
+import urllib3
+import ssl
+from requests.adapters import HTTPAdapter
+from urllib3.poolmanager import PoolManager
 
-# 隱藏 SSL 警告
+# ==========================================
+# SSL 強制修正區塊 (解決 Streamlit Cloud 連線政府網站錯誤)
+# ==========================================
+# 1. 忽略 InsecureRequestWarning 警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# 2. 定義一個不安全的 SSL Adapter，強制降低安全等級
+class UnsafeSSLAdapter(HTTPAdapter):
+    def init_poolmanager(self, connections, maxsize, block=False):
+        # 建立一個忽略憑證驗證的 SSL Context
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        
+        # 強制設定加密演算法 (避開某些政府網站不支援新版加密的問題)
+        # SECLEVEL=1 允許較舊的簽章算法
+        try:
+            ctx.set_ciphers('DEFAULT@SECLEVEL=1')
+        except Exception:
+            # 如果系統不支援 SECLEVEL 設定，則使用預設
+            pass
+            
+        self.poolmanager = PoolManager(
+            num_pools=connections,
+            maxsize=maxsize,
+            block=block,
+            ssl_context=ctx
+        )
 
 # ==========================================
 # 核心邏輯：司法院 API 串接類別
@@ -18,7 +47,7 @@ class JudicialYuanAPI:
         self.password = password
         self.token = None
         
-        # 法院代碼對照表 (可依需求擴充)
+        # 法院代碼對照表
         self.court_map = {
             "最高法院": "TPS",
             "臺灣高等法院": "TPHM",
@@ -29,6 +58,12 @@ class JudicialYuanAPI:
             "臺中地方法院": "TCD",
             "高雄地方法院": "KSD"
         }
+
+        # 初始化 Session 並掛載不安全的 Adapter
+        self.session = requests.Session()
+        adapter = UnsafeSSLAdapter()
+        self.session.mount("https://", adapter)
+        self.session.verify = False  # 全域設定不驗證 (雙重保險)
 
     def authenticate(self):
         """
@@ -41,8 +76,8 @@ class JudicialYuanAPI:
         }
         
         try:
-            # 發送 POST 請求驗證 (設定 timeout 避免卡住)
-            response = requests.post(url, json=payload, headers={'Content-Type': 'application/json'}, timeout=10, verify=False)
+            # 改用 self.session 發送請求
+            response = self.session.post(url, json=payload, headers={'Content-Type': 'application/json'}, timeout=10)
             response.raise_for_status()
             data = response.json()
             
@@ -92,7 +127,8 @@ class JudicialYuanAPI:
                 "j": jid_raw
             }
             
-            response = requests.post(url, json=payload, timeout=20, verify=False)
+            # 改用 self.session 發送請求
+            response = self.session.post(url, json=payload, timeout=20)
             response.raise_for_status()
             result = response.json()
             
