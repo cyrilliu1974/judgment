@@ -3,6 +3,9 @@ import requests
 import datetime
 import urllib3
 import ssl
+import sys  # 新增：用於判斷執行環境
+import os   # 新增：用於讀取 GitHub Secrets
+import argparse # 新增：用於解析指令
 from requests.adapters import HTTPAdapter
 from urllib3.poolmanager import PoolManager
 
@@ -105,11 +108,20 @@ class JudicialYuanAPI:
             # 2. 參數轉換與 JID 組合
             # JID 格式：法院代碼,年度,字別,號次,裁判日期(西元YYYYMMDD),序號
             
-            if court_name not in self.court_map:
-                return None, f"未知的法院名稱：{court_name}"
+            # 支援直接傳入法院代碼（針對 CLI 模式優化）
+            court_map_reverse = {v: k for k, v in self.court_map.items()}
+            if court_name in self.court_map:
+                court_code = self.court_map[court_name]
+            elif court_name in court_map_reverse:
+                court_code = court_name
+            else:
+                return None, f"未知的法院：{court_name}"
             
-            court_code = self.court_map[court_name]
-            ad_date_str = date_dt.strftime("%Y%m%d") # 將 datetime 轉為 YYYYMMDD
+            # 日期處理 (相容 datetime 或字串)
+            if isinstance(date_dt, datetime.date):
+                ad_date_str = date_dt.strftime("%Y%m%d")
+            else:
+                ad_date_str = str(date_dt).replace("-", "")
             
             # 移除輸入可能包含的空白
             case_word = case_word.strip()
@@ -120,14 +132,12 @@ class JudicialYuanAPI:
             jid_raw = f"{court_code},{roc_year},{case_word},{case_no},{ad_date_str},{seq_no}"
             
             # 3. 呼叫 API 取得內容
-            # POST /JDoc, body: {token, j}
             url = f"{self.base_url}/JDoc"
             payload = {
                 "token": self.token,
                 "j": jid_raw
             }
             
-            # 改用 self.session 發送請求
             response = self.session.post(url, json=payload, timeout=20)
             response.raise_for_status()
             result = response.json()
@@ -138,154 +148,178 @@ class JudicialYuanAPI:
             return None, f"查詢過程發生錯誤: {str(e)}"
 
 # ==========================================
-# 前端介面：Streamlit UI
+# 新增：CLI 執行模式 (給 GitHub Actions 使用)
 # ==========================================
-
-# 頁面設定
-st.set_page_config(page_title="司法院裁判書查詢系統", layout="wide")
-
-# CSS 優化 (讓文字框更好閱讀)
-st.markdown("""
-    <style>
-    .stTextArea textarea { font-size: 16px !important; line-height: 1.6 !important; }
-    </style>
-""", unsafe_allow_html=True)
-
-st.title("⚖️ 司法院裁判書查詢系統")
-
-# 1. 讀取 Secrets 帳號密碼
-if "judicial" in st.secrets:
-    user_id = st.secrets["judicial"]["user"]
-    user_pwd = st.secrets["judicial"]["password"]
-    # 初始化 API 物件
-    api = JudicialYuanAPI(user_id, user_pwd)
-else:
-    st.error("⚠️ 請於 .streamlit/secrets.toml 設定 [judicial] 區塊之帳號密碼。")
-    st.stop()
-
-# 2. URL 參數解析與搜尋條件初始化
-st.markdown("### 🔍 輸入查詢條件")
-st.info("請輸入判決書詳細資訊以進行精準查詢，或使用 URL 參數自動帶入。")
-
-# 初始化預設值
-today = datetime.date.today()
-defaults = {
-    "court_index": 1,  # 預設：臺灣高等法院 (index 1)
-    "year": today.year - 1911,
-    "word": "重上更三",
-    "no": "32",
-    "date": today,
-    "seq": "1",
-    "auto_run": False
-}
-
-# 解析 URL 參數 (處理 jid)
-# 格式: jid={法院代碼},{年度},{字別},{案號},{YYYYMMDD},{序號}
-# 範例: ?jid=TPS,110,台上,123,20210101,1
-params = st.query_params
-if "jid" in params:
-    try:
-        jid_str = params["jid"]
-        # 處理可能被 URL encoding 的逗號
-        jid_parts = jid_str.split(",") if "," in jid_str else jid_str.split("%2C")
-        
-        if len(jid_parts) == 6:
-            p_court_code, p_year, p_word, p_no, p_date_str, p_seq = jid_parts
-            
-            # 1. 反查法院名稱
-            # 建立 代碼->名稱 的反向對照表
-            court_map_reverse = {v: k for k, v in api.court_map.items()}
-            
-            # 若代碼存在於對照表中，更新 UI index
-            if p_court_code in court_map_reverse:
-                court_name = court_map_reverse[p_court_code]
-                court_keys = list(api.court_map.keys())
-                if court_name in court_keys:
-                    defaults["court_index"] = court_keys.index(court_name)
-            
-            # 2. 設定其他欄位
-            defaults["year"] = int(p_year)
-            defaults["word"] = p_word
-            defaults["no"] = p_no
-            # 將 YYYYMMDD 字串轉為 datetime.date
-            defaults["date"] = datetime.datetime.strptime(p_date_str, "%Y%m%d").date()
-            defaults["seq"] = p_seq
-            
-            # 3. 標記自動執行
-            defaults["auto_run"] = True
-            st.toast(f"已偵測 URL 參數，自動搜尋：{jid_str}")
-            
-    except Exception as e:
-        st.error(f"URL 參數解析失敗: {e}")
-
-# 3. 搜尋表單 (使用 defaults 設定預設值)
-with st.form("search_form"):
-    col1, col2, col3 = st.columns(3)
+def run_cli_mode(jid_input):
+    # 從 GitHub Secrets 讀取帳密
+    user = os.getenv("JUDICIAL_USER")
+    pwd = os.getenv("JUDICIAL_PWD")
     
-    with col1:
-        # 法院選單
-        input_court = st.selectbox("法院", list(api.court_map.keys()), index=defaults["court_index"])
-        # 年度
-        input_year = st.number_input("年度 (民國)", min_value=1, max_value=200, value=defaults["year"])
-        
-    with col2:
-        # 字別
-        input_word = st.text_input("字別", value=defaults["word"], placeholder="例如：訴、上易")
-        # 號次
-        input_no = st.text_input("號次", value=defaults["no"])
-        
-    with col3:
-        # 日期選擇器
-        input_date = st.date_input("裁判日期", value=defaults["date"])
-        # 序號
-        input_seq = st.text_input("序號", value=defaults["seq"], help="同一案件同一日若有多筆裁判，請調整序號")
+    if not user or not pwd:
+        print("❌ 錯誤：未設定環境變數 JUDICIAL_USER 或 JUDICIAL_PWD")
+        return
 
-    submitted = st.form_submit_button("🚀 開始查詢", type="primary")
+    # 解析 JID
+    parts = jid_input.split(",")
+    if len(parts) != 6:
+        print("❌ 錯誤：JID 格式應為 法院,年度,字別,號次,日期,序號")
+        return
 
-# 4. 處理查詢結果 (點擊按鈕 或 URL 自動觸發)
-if submitted or defaults["auto_run"]:
-    with st.spinner("正在連線司法院資料庫..."):
-        # 呼叫 API
-        data, error_msg = api.get_judgment_content(
-            input_court, 
-            str(input_year), 
-            input_word, 
-            input_no, 
-            input_date, 
-            input_seq
-        )
+    api = JudicialYuanAPI(user, pwd)
+    # 執行查詢
+    data, err = api.get_judgment_content(parts[0], parts[1], parts[2], parts[3], parts[4], parts[5])
+    
+    if err or (isinstance(data, dict) and "error" in data):
+        print(f"❌ 查詢失敗：{err or data.get('error')}")
+    else:
+        # 建立 output 目錄
+        os.makedirs("output", exist_ok=True)
+        filename = f"output/{jid_input.replace(',', '_')}.md"
+        content = data.get("JFULLX", {}).get("JFULLCONTENT", "無內容")
         
-        if error_msg:
-            st.error(f"❌ 查詢失敗: {error_msg}")
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(f"# 判決解析：{jid_input}\n\n")
+            f.write(f"**案由**：{data.get('JTITLE')}\n\n")
+            f.write("## 判決全文\n\n")
+            f.write(content)
+        print(f"✅ 成功存檔至：{filename}")
+
+# ==========================================
+# 原有邏輯封裝：Streamlit UI
+# ==========================================
+def run_streamlit_app():
+    # 頁面設定
+    st.set_page_config(page_title="司法院裁判書查詢系統", layout="wide")
+
+    # CSS 優化 (讓文字框更好閱讀)
+    st.markdown("""
+        <style>
+        .stTextArea textarea { font-size: 16px !important; line-height: 1.6 !important; }
+        </style>
+    """, unsafe_allow_html=True)
+
+    st.title("⚖️ 司法院裁判書查詢系統")
+
+    # 1. 讀取 Secrets 帳號密碼
+    if "judicial" in st.secrets:
+        user_id = st.secrets["judicial"]["user"]
+        user_pwd = st.secrets["judicial"]["password"]
+        # 初始化 API 物件
+        api = JudicialYuanAPI(user_id, user_pwd)
+    else:
+        st.error("⚠️ 請於 .streamlit/secrets.toml 設定 [judicial] 區塊之帳號密碼。")
+        st.stop()
+
+    # 2. URL 參數解析與搜尋條件初始化
+    st.markdown("### 🔍 輸入查詢條件")
+    st.info("請輸入判決書詳細資訊以進行精準查詢，或使用 URL 參數自動帶入。")
+
+    # 初始化預設值
+    today = datetime.date.today()
+    defaults = {
+        "court_index": 1,  # 預設：臺灣高等法院 (index 1)
+        "year": today.year - 1911,
+        "word": "重上更三",
+        "no": "32",
+        "date": today,
+        "seq": "1",
+        "auto_run": False
+    }
+
+    # 解析 URL 參數 (處理 jid)
+    params = st.query_params
+    if "jid" in params:
+        try:
+            jid_str = params["jid"]
+            jid_parts = jid_str.split(",") if "," in jid_str else jid_str.split("%2C")
+            
+            if len(jid_parts) == 6:
+                p_court_code, p_year, p_word, p_no, p_date_str, p_seq = jid_parts
+                court_map_reverse = {v: k for k, v in api.court_map.items()}
+                
+                if p_court_code in court_map_reverse:
+                    court_name = court_map_reverse[p_court_code]
+                    court_keys = list(api.court_map.keys())
+                    if court_name in court_keys:
+                        defaults["court_index"] = court_keys.index(court_name)
+                
+                defaults["year"] = int(p_year)
+                defaults["word"] = p_word
+                defaults["no"] = p_no
+                defaults["date"] = datetime.datetime.strptime(p_date_str, "%Y%m%d").date()
+                defaults["seq"] = p_seq
+                defaults["auto_run"] = True
+                st.toast(f"已偵測 URL 參數，自動搜尋：{jid_str}")
+                
+        except Exception as e:
+            st.error(f"URL 參數解析失敗: {e}")
+
+    # 3. 搜尋表單
+    with st.form("search_form"):
+        col1, col2, col3 = st.columns(3)
         
-        # 檢查 API 是否回傳錯誤訊息 (如查無資料)
-        elif "error" in data:
-            st.warning(f"⚠️ 系統回傳訊息: {data['error']}")
-            st.caption("提示：請檢查日期、字號是否完全正確，或該案件可能尚未公開。")
+        with col1:
+            input_court = st.selectbox("法院", list(api.court_map.keys()), index=defaults["court_index"])
+            input_year = st.number_input("年度 (民國)", min_value=1, max_value=200, value=defaults["year"])
             
-        else:
-            st.success("✅ 成功取得裁判書內容！")
+        with col2:
+            input_word = st.text_input("字別", value=defaults["word"], placeholder="例如：訴、上易")
+            input_no = st.text_input("號次", value=defaults["no"])
             
-            # 解析回傳欄位
-            case_title = data.get("JTITLE", "(無案由資料)")
-            full_content_obj = data.get("JFULLX", {})
-            text_content = full_content_obj.get("JFULLCONTENT", "內容為空")
-            pdf_link = full_content_obj.get("JFULLPDF", "")
+        with col3:
+            input_date = st.date_input("裁判日期", value=defaults["date"])
+            input_seq = st.text_input("序號", value=defaults["seq"], help="同一案件同一日若有多筆裁判，請調整序號")
+
+        submitted = st.form_submit_button("🚀 開始查詢", type="primary")
+
+    # 4. 處理查詢結果
+    if submitted or defaults["auto_run"]:
+        with st.spinner("正在連線司法院資料庫..."):
+            data, error_msg = api.get_judgment_content(
+                input_court, 
+                str(input_year), 
+                input_word, 
+                input_no, 
+                input_date, 
+                input_seq
+            )
             
-            # 顯示標題與基本資訊
-            st.divider()
-            st.subheader(f"📄 {input_court} {input_year}年度{input_word}字第{input_no}號")
-            st.markdown(f"**【案由】**：{case_title}")
-            st.markdown(f"**【裁判日期】**：{input_date.strftime('%Y-%m-%d')}")
-            
-            # 若有 PDF 連結則顯示
-            if pdf_link:
-                st.markdown(f"📥 **[點擊下載原始 PDF 檔案]({pdf_link})**")
-            
-            # 顯示全文內容
-            st.markdown("#### 📜 判決全文")
-            st.text_area("全文內容", text_content, height=600)
-            
-            # 除錯用：顯示原始 JSON 結構
-            with st.expander("🛠️ 查看原始 JSON 資料 (Debug)"):
-                st.json(data)
+            if error_msg:
+                st.error(f"❌ 查詢失敗: {error_msg}")
+            elif isinstance(data, dict) and "error" in data:
+                st.warning(f"⚠️ 系統回傳訊息: {data['error']}")
+                st.caption("提示：請檢查日期、字號是否完全正確，或該案件可能尚未公開。")
+            else:
+                st.success("✅ 成功取得裁判書內容！")
+                case_title = data.get("JTITLE", "(無案由資料)")
+                full_content_obj = data.get("JFULLX", {})
+                text_content = full_content_obj.get("JFULLCONTENT", "內容為空")
+                pdf_link = full_content_obj.get("JFULLPDF", "")
+                
+                st.divider()
+                st.subheader(f"📄 {input_court} {input_year}年度{input_word}字第{input_no}號")
+                st.markdown(f"**【案由】**：{case_title}")
+                st.markdown(f"**【裁判日期】**：{input_date.strftime('%Y-%m-%d')}")
+                
+                if pdf_link:
+                    st.markdown(f"📥 **[點擊下載原始 PDF 檔案]({pdf_link})**")
+                
+                st.markdown("#### 📜 判決全文")
+                st.text_area("全文內容", text_content, height=600)
+                
+                with st.expander("🛠️ 查看原始 JSON 資料 (Debug)"):
+                    st.json(data)
+
+# ==========================================
+# 程式入口點：決定執行 UI 還是 CLI
+# ==========================================
+if __name__ == "__main__":
+    # 如果指令中有 --jid 參數，則執行 CLI 模式
+    if "--jid" in sys.argv:
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--jid", help="判決書編號")
+        args, unknown = parser.parse_known_args()
+        run_cli_mode(args.jid)
+    else:
+        # 否則正常執行 Streamlit UI
+        run_streamlit_app()

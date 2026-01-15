@@ -1,0 +1,47 @@
+name: 判決書自動抓取 (GitHub Actions)
+
+on:
+  workflow_dispatch:
+    inputs:
+      jid:
+        description: '請輸入 JID (格式: 法院代碼,年度,字別,案號,日期,序號)'
+        required: true
+        default: 'TPHM,113,重上更三,32,20250506,1'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 1. 檢出程式碼 (Checkout)
+      uses: actions/checkout@v3
+
+    - name: 2. 設定 Python 環境
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: 3. 安裝必要套件
+      run: |
+        pip install requests urllib3 streamlit
+        # 雖然此環境不跑 UI，但 app_law.py 引用了 streamlit，故需安裝
+
+    - name: 4. 執行抓取任務
+      env:
+        # 將 GitHub Secrets 對應到環境變數
+        JUDICIAL_USER: ${{ secrets.JUDICIAL_USER }}
+        JUDICIAL_PWD: ${{ secrets.JUDICIAL_PWD }}
+      run: |
+        # 這裡執行 app_law.py，並帶入使用者輸入的 jid
+        # 注意：您的 app_law.py 需要加上我在前一則回覆中建議的 CLI 模式判斷
+        python app_law.py --jid "${{ github.event.inputs.jid }}"
+
+    - name: 5. 自動將結果存回 GitHub 儲存庫
+      run: |
+        git config --global user.name "GitHub Action Bot"
+        git config --global user.email "actions@github.com"
+        # 建立 output 資料夾（若不存在）並提交
+        mkdir -p output
+        git add output/
+        git commit -m "自動更新判決資料: ${{ github.event.inputs.jid }}" || exit 0
+        git push
