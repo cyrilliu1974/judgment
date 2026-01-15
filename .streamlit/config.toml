@@ -1,0 +1,10 @@
+[server]
+baseUrlPath = ""
+enableCORS = false
+enableXsrfProtection = false
+headless = true   
+enableWebsocketCompression = true
+
+[browser]
+gatherUsageStats = false
+initialSidebarState = "collapsed"
