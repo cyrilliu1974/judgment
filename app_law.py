@@ -97,6 +97,11 @@ def run_streamlit_app():
         user_pwd = st.secrets["judicial"]["password"]
         # 初始化 API 物件
         api = JudicialYuanAPI(user_id, user_pwd)
+        
+        # 掛載 SSL 修正
+        if hasattr(api, 'session'):
+            api.session.mount("https://", UnsafeSSLAdapter())
+            api.session.verify = False
     else:
         st.error("⚠️ 請於 .streamlit/secrets.toml 設定 [judicial] 區塊之帳號密碼。")
         st.stop()
