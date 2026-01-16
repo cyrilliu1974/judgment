@@ -71,43 +71,55 @@ def health_check():
     """服務健康檢查，Render 部署時需確保此路徑可連通"""
     return {"status": "healthy", "service": "Judicial API Server"}
 
-@app.get("/get_judgment", response_class=PlainTextResponse, tags=["Query"])
+@app.get("/get_judgment") # 移除 response_class=PlainTextResponse
 def get_judgment(
-    court: str = Query(..., description="法院代碼，例如：TPH (臺灣高等法院)"),
-    year: str = Query(..., description="裁判年度 (民國)，例如：112"),
-    word: str = Query(..., description="字別，例如：重上更三"),
-    no: str = Query(..., description="案號次，例如：32"),
-    date: str = Query(..., description="裁判日期，格式 YYYYMMDD，例如：20231025"),
-    seq: str = Query("1", description="序號，通常為 1")
+    court: str, year: str, word: str, no: str, date: str, seq: str = "1"
 ):
-    """
-    🔍 查詢裁判書全文
-    會將輸入參數組合成 JID 並向司法院伺服器請求內容。
-    """
     try:
-        # 執行核心查詢邏輯
+        # 1. 執行核心查詢
         data, err = api.get_judgment_content(court, year, word, no, date, seq)
         
-        # 處理 API 層級的連線或權限錯誤
+        # 2. 處理 API 層級連線或權限錯誤 (保留原本的 HTTPException)
         if err:
             raise HTTPException(status_code=400, detail=f"API 查詢錯誤：{err}")
         
         if not data:
             raise HTTPException(status_code=404, detail="司法院資料庫未回傳資料")
 
-        # 根據原始規格提取全文內容
+        # 3. 檢查是否有全文內容
         content_obj = data.get("JFULLX", {})
         text_content = content_obj.get("JFULLCONTENT")
         
-        # 檢查內容是否為空或包含錯誤訊息
         if not text_content:
+            # 即使沒全文，也回傳 JSON 讓 LLM 知道原因
             error_hint = data.get("error", "找不到判決書全文，請檢查字號與日期是否正確。")
-            return f"系統提示：{error_hint}"
+            return {
+                "success": False,
+                "message": error_hint,
+                "raw_data": data  # 保留原始資料供 LLM 參考
+            }
         
-        return text_content
+        # 4. 成功時，回傳完整的 JSON 格式
+        # 這樣 LLM 可以同時拿到全文、案由、PDF 連結
+        return {
+            "success": True,
+            "title": data.get("JTITLE"),
+            "content": text_content,
+            "pdf_url": content_obj.get("JFULLPDF"),
+            "metadata": {
+                "court": court,
+                "year": year,
+                "word": word,
+                "no": no,
+                "date": date
+            }
+        }
 
+    except HTTPException as he:
+        # 重新拋出已知的 HTTP 異常
+        raise he
     except Exception as e:
-        # 捕捉未預期的程式錯誤，避免服務崩潰
+        # 捕捉未預期的程式錯誤
         raise HTTPException(status_code=500, detail=f"伺服器內部異常：{str(e)}")
 
 # =========================================================
