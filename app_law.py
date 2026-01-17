@@ -8,6 +8,7 @@ import os   # 新增：用於讀取 GitHub Secrets
 import argparse # 新增：用於解析指令
 from requests.adapters import HTTPAdapter
 from urllib3.poolmanager import PoolManager
+from judicial_api import JudicialYuanAPI
 
 # ==========================================
 # SSL 強制修正區塊 (解決 Streamlit Cloud 連線政府網站錯誤)
