@@ -1,0 +1,16 @@
+name: Wake Up Streamlit
+
+on:
+  schedule:
+    # 每 1 小時跑一次，增加成功率
+    - cron: '0 * * * *'
+  workflow_dispatch: 
+
+jobs:
+  ping_app:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Request
+        run: |
+          # 使用 --max-time 防止卡死，使用 --silent 減少日誌雜亂
+          curl -I -s --max-time 30 -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"  "https://judgment.streamlit.app/" || true
